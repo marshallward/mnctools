@@ -66,7 +66,7 @@ def collate(tile_fnames, output_fname):
                 v_shape[i] = var.shape[i]
         fields[v] = np.empty(v_shape)
     
-    tile_transfer(tile, fields)
+    transfer_tile(tile, fields)
     
     tile.close()
     
@@ -95,7 +95,7 @@ def transfer_tile(tile, fields):
             
             # Tile index
             nt = tile.tile_number - 1
-            xt, yt = nt % nPx, nt / nPx
+            xt, yt = nt % tile.nPx, nt / tile.nPx
             
             xs = tile.sNx * xt
             xe = xs + tile.sNx
