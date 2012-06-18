@@ -7,7 +7,7 @@ import netCDF4 as nc
 
 # Globals
 tiling_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
-tiled_dims = ['X', 'Y', 'Xp1', 'Yp1']
+#tiled_dims = ['X', 'Y', 'Xp1', 'Yp1']
 
 
 def collate(tile_fnames, output_fname):
@@ -20,14 +20,13 @@ def collate(tile_fnames, output_fname):
     # that may be a job for MITgcm
     
     fname = tile_fnames[0]
-    
     tile = nc.Dataset(fname, 'r')
     
     # Determine collated grid dimensions
-    Nx, Ny = tile.Nx, tile.Ny
-    sNx, sNy = tile.sNx, tile.sNy
-    nPx, nPy = tile.nPx, tile.nPy
-    tiled_dimsize = dict(zip(tiled_dims, (Nx, Ny, 1 + Nx, 1 + Ny)))
+    tiled_dimsize = {'X': tile.Nx,
+                     'Y': tile.Ny,
+                     'Xp1': 1 + tile.Nx,
+                     'Yp1': 1 + tile.Ny}
     
     # Copy global attributes
     output_attrs = [attr for attr in tile.ncattrs()
@@ -40,60 +39,44 @@ def collate(tile_fnames, output_fname):
         dim = tile.dimensions[d]
         if dim.isunlimited():
             output_nc.createDimension(d, None)
-        elif d in tiled_dims:
+        elif d in tiled_dimsize:
             output_nc.createDimension(d, tiled_dimsize[d])
         else:
             output_nc.createDimension(d, len(dim))
     
-    # Initialise variables, copy initial values
-    
-    fields = {}
+    # Create a variable manifest
+    tiled_vars = {}
     for v in tile.variables:
         var = tile.variables[v]
-        dims = var.dimensions
         
         v_out = output_nc.createVariable(v, var.dtype, var.dimensions)
         
-        for attr in var.ncattrs():
-            v_out.setncattr(attr, var.getncattr(attr))
-        
-        # Pre-allocate output fields
-        
-        # Fix unlimited dimension sizes if necessary
-        v_shape = list(v_out.shape)
-        for i, d in enumerate(dims):
-            if tile.dimensions[d].isunlimited():
-                v_shape[i] = var.shape[i]
-        fields[v] = np.empty(v_shape)
-    
-    transfer_tile(tile, fields)
+        # Identify tiled variables, copy nontiled variables
+        if any([d in var.dimensions for d in tiled_dimsize]):
+            tiled_vars[v] = v_out
+        else:
+            output_nc.variables[v][:] = tile.variables[v][:]
     
     tile.close()
-    
-    # Copy the rest of the tile contents to the global fields
-    for fname in tile_fnames[1:]:
-        tile = nc.Dataset(fname, 'r')
 
-        transfer_tile(tile, fields)
-        tile.close()
-    
-    for v in output_nc.variables:
-        var = output_nc.variables[v]
-        var[:] = fields[v]
-    
-    output_nc.close()
-
-
-def transfer_tile(tile, fields):
-    
-    for v in tile.variables:
-        var = tile.variables[v]
-        dims = var.dimensions
+    # Copy tiled variables
+    for v in tiled_vars:
+        v_out = output_nc.variables[v]
+        dims = v_out.dimensions
         
-        # Determine bounds: xs <= x < xe, ys <= y < ye
-        if any([d in var.dimensions for d in tiled_dims]):
+        # Allocate variable field
+        v_shape = list(v_out.shape)
+        for i, d in enumerate(v_out.dimensions):
+            if tile.dimensions[d].isunlimited():
+                v_shape[i] = v_out.shape[i]
+        field = np.empty(v_shape)
+        
+        # Copy each tile to field
+        for fname in tile_fnames:
+            tile = nc.Dataset(fname, 'r')
+            var = tile.variables[v]
             
-            # Tile index
+            # Determine bounds: xs <= x < xe, ys <= y < ye
             nt = tile.tile_number - 1
             xt, yt = nt % tile.nPx, nt / tile.nPx
             
@@ -107,16 +90,24 @@ def transfer_tile(tile, fields):
                 xe += 1
             if 'Yp1' in dims:
                 ye += 1
-         
-        # Transfer tile to the collated field
-        if ('X' in dims or 'Xp1' in dims) and ('Y' in dims or 'Yp1' in dims):
-            fields[v][..., ys:ye, xs:xe] = var[:]
-        
-        elif ('X' in dims or 'Xp1' in dims):
-            fields[v][..., xs:xe] = var[:]
-        
-        elif ('Y' in dims or 'Yp1' in dims):
-            fields[v][..., ys:ye] = var[:]
+
+            # Transfer tile to the collated field
+            if ('X' in dims or 'Xp1' in dims) and ('Y' in dims or 'Yp1' in dims):
+                field[..., ys:ye, xs:xe] = var[:]
+
+            elif ('X' in dims or 'Xp1' in dims):
+                field[..., xs:xe] = var[:]
             
-        else:
-            fields[v] = tile.variables[v][:]
+            elif ('Y' in dims or 'Yp1' in dims):
+                field[..., ys:ye] = var[:]
+                
+            else:
+                # TODO: Use an exception?
+                sys.exit('Error: untiled variable')
+            
+            tile.close()
+        
+        # Save field to output
+        output_nc.variables[v][:] = field[:]
+
+    output_nc.close()
