@@ -3,18 +3,21 @@
 
 import numpy as np
 import netCDF4 as nc
-
+import os
 
 # Globals
 tiling_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
 
+
 def collate(tile_fnames, output_fname, partition=None):
     # TODO: Big ass function, break this into testable pieces
+    # XXX: Memory usage is about 4x larger than ought to be required
+    #      This needs to be sorted out
     
     output_nc = nc.Dataset(output_fname, 'w')
     
     # Process the first element to initialise the output fields
-    # TODO: It would be better to construct this from some manifest file, but
+    # NOTE: It would be better to construct this from some manifest file, but
     # that may be a job for MITgcm
     
     fname = tile_fnames[0]
@@ -35,6 +38,7 @@ def collate(tile_fnames, output_fname, partition=None):
     # Copy collated dimensions
     for d in tile.dimensions:
         dim = tile.dimensions[d]
+        
         if dim.isunlimited():
             output_nc.createDimension(d, None)
         elif d in tiled_dimsize:
@@ -47,7 +51,6 @@ def collate(tile_fnames, output_fname, partition=None):
     buffered_vars = {}
     for v in tile.variables:
         var = tile.variables[v]
-        
         v_out = output_nc.createVariable(v, var.dtype, var.dimensions)
         
         # Sort tiled variables and copy untiled variables
@@ -58,7 +61,7 @@ def collate(tile_fnames, output_fname, partition=None):
                 tiled_vars[v] = v_out
         else:
             output_nc.variables[v][:] = tile.variables[v][:]
-   
+    
     tile.close()
     
     #---
@@ -122,21 +125,28 @@ def collate(tile_fnames, output_fname, partition=None):
     
     # Index partitions
     # NOTE: Assumes 'T' (i.e. time) is the top axis to be partitioned
-    if 'T' in output_nc.dimensions:
+    if 'T' in output_nc.dimensions and buffered_vars:
         t_len = len(output_nc.dimensions['T'])
-         
-        # TODO: Might be able to calculate optimal partition from available
-        # memory
+       
+        # Estimate number of partitions based on available memory
         if not partition:
-            partition = 1
-        elif partition == 'all':
-            partition = t_len
+            v_itemsize = max([output_nc.variables[v].dtype.itemsize
+                              for v in buffered_vars])
+            v_sample = max([output_nc.variables[v].size
+                            for v in buffered_vars])
+            pbs_vmem = int(os.environ['PBS_VMEM'])
+            
+            # Assume jobs require 4x the variable memory
+            partition = 1 + 4 * ((v_itemsize * v_sample) / pbs_vmem)
         
+        # Determine index bounds for partitions
         t_bounds = [(i * t_len / partition, (i+1) * t_len / partition)
                     for i in range(partition)]
+    
     else:
         t_bounds = []
     
+    # Begin buffered tile transfer
     for ts, te in t_bounds:
         
         # Copy tiled variables
@@ -190,5 +200,5 @@ def collate(tile_fnames, output_fname, partition=None):
             # Save field to output
             output_nc.variables[v][ts:te, ...] = field[:]
             del field
-    
+   
     output_nc.close()
