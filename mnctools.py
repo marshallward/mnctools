@@ -6,20 +6,17 @@ import netCDF4 as nc
 import os
 
 # Globals
-tiling_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
+tile_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
 
 
 def collate(tile_fnames, output_fname, partition=None):
-    # TODO: Big ass function, break this into testable pieces
-    # XXX: Memory usage is about 4x larger than ought to be required
-    #      This needs to be sorted out
+    # TODO: Moduarlise tile copying
+    # TODO: Assert dimension and variable equivalence between tiles
     
     output_nc = nc.Dataset(output_fname, 'w')
     
-    # Process the first element to initialise the output fields
-    # NOTE: It would be better to construct this from some manifest file, but
-    # that may be a job for MITgcm
-    
+    # Use a sample tile to initialise the output fields
+    # (Can MITgcm be modified to provide a manifest?)
     fname = tile_fnames[0]
     tile = nc.Dataset(fname, 'r')
     
@@ -31,7 +28,7 @@ def collate(tile_fnames, output_fname, partition=None):
     
     # Copy global attributes
     output_attrs = [attr for attr in tile.ncattrs()
-                    if not attr in tiling_attrs]
+                    if not attr in tile_attrs]
     for attr in output_attrs:
         output_nc.setncattr(attr, tile.getncattr(attr))
     
@@ -77,7 +74,7 @@ def collate(tile_fnames, output_fname, partition=None):
             # NOTE: Unnecessary if 'T' is the only unlimited variable
             if output_nc.dimensions[d].isunlimited():
                 v_shape[i] = v_out.shape[0]
-        field = np.empty(v_shape)
+        field = np.empty(v_shape, dtype=v_out.dtype)
         
         # Copy each tile to field
         for fname in tile_fnames:
@@ -115,10 +112,9 @@ def collate(tile_fnames, output_fname, partition=None):
                 sys.exit('Error: untiled variable')
             
             tile.close()
-        
+       
         # Save field to output
         output_nc.variables[v][:] = field[:]
-        del field
     
     #---
     # Process buffered variables along time axis
@@ -127,17 +123,16 @@ def collate(tile_fnames, output_fname, partition=None):
     # NOTE: Assumes 'T' (i.e. time) is the top axis to be partitioned
     if 'T' in output_nc.dimensions and buffered_vars:
         t_len = len(output_nc.dimensions['T'])
-       
+        
         # Estimate number of partitions based on available memory
+        # NOTE: np.array.nbytes requires allocation, do not use
         if not partition:
             v_itemsize = max([output_nc.variables[v].dtype.itemsize
                               for v in buffered_vars])
-            v_sample = max([output_nc.variables[v].size
-                            for v in buffered_vars])
+            v_size = max([output_nc.variables[v].size for v in buffered_vars])
             pbs_vmem = int(os.environ['PBS_VMEM'])
             
-            # Assume jobs require 4x the variable memory
-            partition = 1 + 4 * ((v_itemsize * v_sample) / pbs_vmem)
+            partition = 1 + int(1.25 * v_itemsize * v_size) / pbs_vmem
         
         # Determine index bounds for partitions
         t_bounds = [(i * t_len / partition, (i+1) * t_len / partition)
@@ -145,7 +140,7 @@ def collate(tile_fnames, output_fname, partition=None):
     
     else:
         t_bounds = []
-    
+   
     # Begin buffered tile transfer
     for ts, te in t_bounds:
         
@@ -159,7 +154,7 @@ def collate(tile_fnames, output_fname, partition=None):
             for i, d in enumerate(v_out.dimensions):
                 if output_nc.dimensions[d].isunlimited():
                     v_shape[i] = te - ts
-            field = np.empty(v_shape)
+            field = np.empty(v_shape, dtype=v_out.dtype)
             
             # Copy each tile to field
             for fname in tile_fnames:
@@ -194,11 +189,10 @@ def collate(tile_fnames, output_fname, partition=None):
                 else:
                     # TODO: Use an exception?
                     sys.exit('Error: untiled variable')
-                
+               
                 tile.close()
-            
+          
             # Save field to output
             output_nc.variables[v][ts:te, ...] = field[:]
-            del field
-   
+
     output_nc.close()
