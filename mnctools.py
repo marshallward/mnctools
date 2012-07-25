@@ -10,9 +10,6 @@ tile_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
 
 
 def collate(tile_fnames, output_fname, partition=None):
-    # TODO: Moduarlise tile copying
-    # TODO: Assert dimension and variable equivalence between tiles
-    
     output_nc = nc.Dataset(output_fname, 'w')
     
     # Use a sample tile to initialise the output fields
@@ -66,17 +63,58 @@ def collate(tile_fnames, output_fname, partition=None):
     
     #---
     # Copy unbuffered tiled variables
+    transfer_tiles(output_nc, tile_fnames, tiled_vars)
+    
+    #---
+    # Process buffered variables along time axis
+    
+    # Index partitions
+    # NOTE: Assumes 'T' (i.e. time) is the top axis to be partitioned
+    if 'T' in output_nc.dimensions and buffered_vars:
+        t_len = len(output_nc.dimensions['T'])
+        
+        # Estimate number of partitions based on available memory
+        # NOTE: np.array.nbytes requires allocation, do not use
+        # NOTE: To be honest, the partition forecaster isn't very good...
+        if not partition:
+            partition = t_len
+        elif partition == 'auto':
+            v_itemsize = max([output_nc.variables[v].dtype.itemsize
+                              for v in buffered_vars])
+            v_size = max([output_nc.variables[v].size for v in buffered_vars])
+            pbs_vmem = int(os.environ['PBS_VMEM'])
+           
+            # Memory model: 80MB + array allocation
+            model_vmem = (80 * 2**20) + (v_itemsize * v_size)
+            
+            # Pad memory
+            partition = 1 + int(1.25 * model_vmem) / pbs_vmem
+        
+        # Determine index bounds for partitions
+        t_bounds = [(i * t_len / partition, (i+1) * t_len / partition)
+                    for i in range(partition)]
+    
+    else:
+        t_bounds = []
+    
+    # Begin buffered tile transfer
+    for ts, te in t_bounds:        
+        transfer_tiles(output_nc, tile_fnames, buffered_vars, ts, te)
+
+
+def transfer_tiles(output_nc, tile_fnames, tiled_vars, ts=0, te=-1):
     
     for v in tiled_vars:
         v_out = output_nc.variables[v]
         dims = v_out.dimensions
         
         # Allocate variable field
+        is_buffered = False
         v_shape = list(v_out.shape)
         for i, d in enumerate(v_out.dimensions):
-            # NOTE: Unnecessary if 'T' is the only unlimited variable
             if output_nc.dimensions[d].isunlimited():
-                v_shape[i] = v_out.shape[0]
+                v_shape[i] = te - ts
+                is_buffered = True
         field = np.empty(v_shape, dtype=v_out.dtype)
         
         # Copy each tile to field
@@ -99,6 +137,12 @@ def collate(tile_fnames, output_fname, partition=None):
                 xe += 1
             if 'Yp1' in dims:
                 ye += 1
+           
+            # If necessary, pull out a time-buffered sample
+            if is_buffered:
+                # NOTE: Assumes that 'T' is the first axis
+                assert var.dimensions[0] == 'T'
+                var = var[ts:te, ...]
             
             # Transfer tile to the collated field
             if ('X' in dims or 'Xp1' in dims) and ('Y' in dims or 'Yp1' in dims):
@@ -115,93 +159,9 @@ def collate(tile_fnames, output_fname, partition=None):
                 sys.exit('Error: untiled variable')
             
             tile.close()
-       
+        
         # Save field to output
-        output_nc.variables[v][:] = field[:]
-    
-    #---
-    # Process buffered variables along time axis
-    
-    # Index partitions
-    # NOTE: Assumes 'T' (i.e. time) is the top axis to be partitioned
-    if 'T' in output_nc.dimensions and buffered_vars:
-        t_len = len(output_nc.dimensions['T'])
-        
-        # Estimate number of partitions based on available memory
-        # NOTE: np.array.nbytes requires allocation, do not use
-        if not partition:
-            partition = t_len
-        elif partition == 'auto':
-            v_itemsize = max([output_nc.variables[v].dtype.itemsize
-                              for v in buffered_vars])
-            v_size = max([output_nc.variables[v].size for v in buffered_vars])
-            pbs_vmem = int(os.environ['PBS_VMEM'])
-           
-            # Memory model: 80MB + array allocation
-            model_vmem = (80 * 2**20) + (v_itemsize * v_size)
-            
-            # Pad memory
-            partition = 1 + int(1.25 * model_vmem) / pbs_vmem
-        
-        # Determine index bounds for partitions
-        t_bounds = [(i * t_len / partition, (i+1) * t_len / partition)
-                    for i in range(partition)]
-    
-    else:
-        t_bounds = []
-   
-    # Begin buffered tile transfer
-    for ts, te in t_bounds:
-        
-        # Copy tiled variables
-        for v in buffered_vars:
-            v_out = output_nc.variables[v]
-            dims = v_out.dimensions
-            
-            # Allocate variable field
-            v_shape = list(v_out.shape)
-            for i, d in enumerate(v_out.dimensions):
-                if output_nc.dimensions[d].isunlimited():
-                    v_shape[i] = te - ts
-            field = np.empty(v_shape, dtype=v_out.dtype)
-            
-            # Copy each tile to field
-            for fname in tile_fnames:
-                tile = nc.Dataset(fname, 'r')
-                var = tile.variables[v]
-                
-                # Determine bounds: xs <= x < xe, ys <= y < ye
-                nt = tile.tile_number - 1
-                xt, yt = nt % tile.nPx, nt / tile.nPx
-                
-                xs = tile.sNx * xt
-                xe = xs + tile.sNx
-                ys = tile.sNy * yt
-                ye = ys + tile.sNy
-                
-                # Extend range for boundary grids
-                if 'Xp1' in dims:
-                    xe += 1
-                if 'Yp1' in dims:
-                    ye += 1
-                
-                # Transfer tile to the collated field
-                if ('X' in dims or 'Xp1' in dims) and ('Y' in dims or 'Yp1' in dims):
-                    field[..., ys:ye, xs:xe] = var[ts:te, ...]
-                
-                elif ('X' in dims or 'Xp1' in dims):
-                    field[..., xs:xe] = var[ts:te, ...]
-                
-                elif ('Y' in dims or 'Yp1' in dims):
-                    field[..., ys:ye] = var[ts:te, ...]
-                
-                else:
-                    # TODO: Use an exception?
-                    sys.exit('Error: untiled variable')
-               
-                tile.close()
-          
-            # Save field to output
+        if is_buffered:
             output_nc.variables[v][ts:te, ...] = field[:]
-
-    output_nc.close()
+        else:
+            output_nc.variables[v][:] = field[:]
