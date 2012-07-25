@@ -16,7 +16,6 @@ def collate(tile_fnames, output_fname, partition=None):
     output_nc = nc.Dataset(output_fname, 'w')
     
     # Use a sample tile to initialise the output fields
-    # (Can MITgcm be modified to provide a manifest?)
     fname = tile_fnames[0]
     tile = nc.Dataset(fname, 'r')
     
@@ -50,6 +49,10 @@ def collate(tile_fnames, output_fname, partition=None):
         var = tile.variables[v]
         v_out = output_nc.createVariable(v, var.dtype, var.dimensions)
         
+        # Copy attributes
+        for attr in var.ncattrs():
+            v_out.setncattr(attr, var.getncattr(attr))
+        
         # Sort tiled variables and copy untiled variables
         if any([d in var.dimensions for d in tiled_dimsize]):
             if 'T' in var.dimensions:
@@ -80,7 +83,7 @@ def collate(tile_fnames, output_fname, partition=None):
         for fname in tile_fnames:
             tile = nc.Dataset(fname, 'r')
             var = tile.variables[v]
-           
+            
             # Determine bounds: xs <= x < xe, ys <= y < ye
             # TODO: Precalculate and store the index ranges
             nt = tile.tile_number - 1
@@ -127,12 +130,18 @@ def collate(tile_fnames, output_fname, partition=None):
         # Estimate number of partitions based on available memory
         # NOTE: np.array.nbytes requires allocation, do not use
         if not partition:
+            partition = t_len
+        elif partition == 'auto':
             v_itemsize = max([output_nc.variables[v].dtype.itemsize
                               for v in buffered_vars])
             v_size = max([output_nc.variables[v].size for v in buffered_vars])
             pbs_vmem = int(os.environ['PBS_VMEM'])
+           
+            # Memory model: 80MB + array allocation
+            model_vmem = (80 * 2**20) + (v_itemsize * v_size)
             
-            partition = 1 + int(1.25 * v_itemsize * v_size) / pbs_vmem
+            # Pad memory
+            partition = 1 + int(1.25 * model_vmem) / pbs_vmem
         
         # Determine index bounds for partitions
         t_bounds = [(i * t_len / partition, (i+1) * t_len / partition)
