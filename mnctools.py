@@ -10,11 +10,13 @@ tile_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
 
 
 def collate(tile_fnames, output_fname, partition=None):
-    output_nc = nc.Dataset(output_fname, 'w')
     
     # Use a sample tile to initialise the output fields
     fname = tile_fnames[0]
     tile = nc.Dataset(fname, 'r')
+    
+    # Create output file using tile's format
+    output_nc = nc.Dataset(output_fname, 'w', format=tile.file_format)
     
     # Determine collated grid dimensions
     tiled_dimsize = {'X': tile.Nx,
@@ -83,7 +85,7 @@ def collate(tile_fnames, output_fname, partition=None):
                               for v in buffered_vars])
             v_size = max([output_nc.variables[v].size for v in buffered_vars])
             pbs_vmem = int(os.environ['PBS_VMEM'])
-           
+            
             # Memory model: 80MB + array allocation
             model_vmem = (80 * 2**20) + (v_itemsize * v_size)
             
@@ -137,7 +139,7 @@ def transfer_tiles(output_nc, tile_fnames, tiled_vars, ts=0, te=-1):
                 xe += 1
             if 'Yp1' in dims:
                 ye += 1
-           
+            
             # If necessary, pull out a time-buffered sample
             if is_buffered:
                 # NOTE: Assumes that 'T' is the first axis
@@ -153,7 +155,7 @@ def transfer_tiles(output_nc, tile_fnames, tiled_vars, ts=0, te=-1):
             
             elif ('Y' in dims or 'Yp1' in dims):
                 field[..., ys:ye] = var[:]
-                
+            
             else:
                 # TODO: Use an exception?
                 sys.exit('Error: untiled variable')
