@@ -15,8 +15,14 @@ def collate(tile_fnames, output_fname, partition=None):
     fname = tile_fnames[0]
     tile = nc.Dataset(fname, 'r')
     
+    if tile.file_format == 'NETCDF3_CLASSIC':
+        # Force classic NetCDF3 to 64-bit, in case the composite is >2GiB
+        output_format = 'NETCDF3_64BIT'
+    else:
+        output_format = tile.file_format
+    
     # Create output file using tile's format
-    output_nc = nc.Dataset(output_fname, 'w', format=tile.file_format)
+    output_nc = nc.Dataset(output_fname, 'w', format=output_format)
     
     # Determine collated grid dimensions
     tiled_dimsize = {'X': tile.Nx,
@@ -42,6 +48,7 @@ def collate(tile_fnames, output_fname, partition=None):
             output_nc.createDimension(d, len(dim))
     
     # Create a variable manifest
+    untiled_vars = {}
     tiled_vars = {}
     buffered_vars = {}
     for v in tile.variables:
@@ -59,7 +66,11 @@ def collate(tile_fnames, output_fname, partition=None):
             else:
                 tiled_vars[v] = v_out
         else:
-            output_nc.variables[v][:] = tile.variables[v][:]
+            untiled_vars[v] = v_out
+    
+    # Before closing the tile, transfer any untiled variables
+    for v in untiled_vars:
+        output_nc.variables[v][:] = tile.variables[v][:]
     
     tile.close()
     
@@ -100,8 +111,10 @@ def collate(tile_fnames, output_fname, partition=None):
         t_bounds = []
     
     # Begin buffered tile transfer
-    for ts, te in t_bounds:        
+    for ts, te in t_bounds:
         transfer_tiles(output_nc, tile_fnames, buffered_vars, ts, te)
+
+    output_nc.close()
 
 
 def transfer_tiles(output_nc, tile_fnames, tiled_vars, ts=0, te=-1):
