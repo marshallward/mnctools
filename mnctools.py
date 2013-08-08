@@ -10,16 +10,13 @@ tile_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
 
 
 def collate(tile_fnames, output_fname, partition=None):
-    
+
     # Use a sample tile to initialise the output fields
     fname = tile_fnames[0]
     tile = nc.Dataset(fname, 'r')
     
-    if tile.file_format == 'NETCDF3_CLASSIC':
-        # Force classic NetCDF3 to 64-bit, in case the composite is >2GiB
-        output_format = 'NETCDF3_64BIT'
-    else:
-        output_format = tile.file_format
+    # Force netCDF4 output format
+    output_format = 'NETCDF4'
     
     # Create output file using tile's format
     output_nc = nc.Dataset(output_fname, 'w', format=output_format)
