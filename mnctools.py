@@ -1,4 +1,5 @@
 import numpy as np
+import sys
 import netCDF4 as nc
 import os
 
@@ -8,14 +9,14 @@ from version import __version__
 tile_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
 
 
-def collate(tile_fnames, output_fname, partition=None):
+def collate(tile_fnames, output_fname, partition=None, deflatelvl=5, shuffle=True):
 
     # Use a sample tile to initialise the output fields
     fname = tile_fnames[0]
     tile = nc.Dataset(fname, 'r')
 
     # Force netCDF4 output format
-    output_format = 'NETCDF4'
+    output_format = 'NETCDF4_CLASSIC'
 
     # Create output file using tile's format
     output_nc = nc.Dataset(output_fname, 'w', format=output_format)
@@ -49,7 +50,11 @@ def collate(tile_fnames, output_fname, partition=None):
     buffered_vars = {}
     for v in tile.variables:
         var = tile.variables[v]
-        v_out = output_nc.createVariable(v, var.dtype, var.dimensions)
+        if deflatelvl > 0:
+            # TODO: implement decent chunking scheme, use (bad) library defaults meanwhile
+            v_out = output_nc.createVariable(v, var.dtype, var.dimensions, zlib=True, complevel=deflatelvl, shuffle=shuffle)
+        else:
+            v_out = output_nc.createVariable(v, var.dtype, var.dimensions)
 
         # Copy attributes
         for attr in var.ncattrs():
