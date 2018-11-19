@@ -1,9 +1,8 @@
-#!/usr/bin/env python
-# coding: utf-8
-
 import numpy as np
 import netCDF4 as nc
 import os
+
+from version import __version__
 
 # Globals
 tile_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
