@@ -1,5 +1,6 @@
 """Installation script for mnctools
 """
+import os
 
 try:
     from setuptools import setup
@@ -7,7 +8,9 @@ except ImportError:
     from distutils.core import setup
 
 project_name = 'mnctools'
-project_version = __import__('version').__version__
+project_version = __import__(project_name).__version__
+project_pkgs = [path for (path, dirs, files) in os.walk(project_name)
+                if '__init__.py' in files]
 project_readme_fname = 'README.rst'
 
 with open(project_readme_fname) as f:
@@ -22,7 +25,7 @@ setup(
     author_email = 'mnctools@marshallward.org',
     url = 'http://github.com/marshallward/mnctools',
 
-    py_modules = ['mnctools'],
+    packages=project_pkgs,
     install_requires=[
         'netCDF4',
         'numpy',
@@ -32,15 +35,11 @@ setup(
         'License :: OSI Approved :: Apache Software License',
         'Programming Language :: Python',
         'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.2',
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
         'Topic :: Utilities',
     ],
 
-    keywords = ['ropes', 'rope', 'string'],
+    keywords = ['MITgcm'],
 )
