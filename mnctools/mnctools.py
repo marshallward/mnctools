@@ -100,10 +100,10 @@ def collate(tile_fnames, output_fname, partition=None, deflatelvl=5, shuffle=Tru
             model_vmem = (80 * 2**20) + (v_itemsize * v_size)
 
             # Pad memory
-            partition = 1 + int(1.25 * model_vmem) / pbs_vmem
+            partition = 1 + int(1.25 * model_vmem) // pbs_vmem
 
         # Determine index bounds for partitions
-        t_bounds = [(i * t_len / partition, (i+1) * t_len / partition)
+        t_bounds = [(i * t_len // partition, (i+1) * t_len // partition)
                     for i in range(partition)]
 
     else:
@@ -139,7 +139,7 @@ def transfer_tiles(output_nc, tile_fnames, tiled_vars, ts=0, te=-1):
             # Determine bounds: xs <= x < xe, ys <= y < ye
             # TODO: Precalculate and store the index ranges
             nt = tile.tile_number - 1
-            xt, yt = nt % tile.nPx, nt / tile.nPx
+            xt, yt = nt % tile.nPx, nt // tile.nPx
 
             xs = tile.sNx * xt
             xe = xs + tile.sNx
