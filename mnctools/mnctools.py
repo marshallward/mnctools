@@ -3,8 +3,6 @@ import sys
 import netCDF4 as nc
 import os
 
-from version import __version__
-
 # Globals
 tile_attrs = ['tile_number', 'sNx', 'sNy', 'nSx', 'nSy', 'nPx', 'nPy']
 
